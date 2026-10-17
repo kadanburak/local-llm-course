@@ -1,42 +1,51 @@
-﻿using System.Diagnostics;
-using OllamaSharp;
+﻿using OllamaSharp;
 using Microsoft.Extensions.AI;
 
 var ollamaUri = new Uri("http://localhost:11434");
 
 var model = "qwen3:4b-instruct";
 
-var prompt = "In about 150 words, explain what .NET is and what you can build with it.";
-
 IChatClient chat = new OllamaApiClient(ollamaUri, model);
 
-var sw = Stopwatch.StartNew();
+var system = new ChatMessage(ChatRole.System,
+    "You are a friendly assistant. Answer in one short sentence.");
 
-List<ChatResponseUpdate> updates = [];
+List<ChatMessage> messages = [system];
 
-TimeSpan? firstToken = null;
+string[] questions = [
+        "Hi! My name is Burak, and I teach .Net",
+        "What is my name?",
+        "What do I teach"
+    ];
 
-await foreach(ChatResponseUpdate update in chat.GetStreamingResponseAsync(prompt))
+for(var turn = 1; turn <= questions.Length; turn++)
 {
-    if(firstToken is null && !string.IsNullOrEmpty(update.Text))
-    {
-        firstToken = sw.Elapsed;
-    }
+    var question = questions[turn - 1];
+    Console.WriteLine($"You: {question}");
 
-    Console.Write(update.Text);
+    messages.Add(new ChatMessage(ChatRole.User, question));
 
-    updates.Add(update);
+    Console.Write("Model: ");
+    ChatResponse response = await AskAsync(messages);
+
+    messages.AddMessages(response);
+
+    Console.WriteLine($"    turn {turn}");
+    Console.WriteLine();
 }
 
-ChatResponse response = updates.ToChatResponse();
+async Task<ChatResponse> AskAsync(IEnumerable<ChatMessage> conversation)
+{
+    List<ChatResponseUpdate> updates = [];
 
-sw.Stop();
+    await foreach(ChatResponseUpdate update in chat.GetStreamingResponseAsync(conversation))
+    {
+        Console.Write(update.Text);
+        updates.Add(update);
+    }
 
-Console.WriteLine($"Response: {response.Text}");
-Console.WriteLine($"Answered By: {response.ModelId}");
-Console.WriteLine($"Finish Reason: {response.FinishReason}");
-Console.WriteLine($"Input Tokens: {response.Usage?.InputTokenCount}");
-Console.WriteLine($"Output Tokens: {response.Usage?.OutputTokenCount}");
-Console.WriteLine($"Total Tokens: {response.Usage?.TotalTokenCount}");
-Console.WriteLine($"Time: {sw.Elapsed.TotalSeconds:F2} s");
-Console.WriteLine($"First Token: {firstToken?.Seconds:F2} s");
+    Console.WriteLine(); // empty line
+    return updates.ToChatResponse();
+}
+
+
