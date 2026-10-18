@@ -1,44 +1,31 @@
 ﻿using OllamaSharp;
 using Microsoft.Extensions.AI;
 
+// "In about 150 words, explain what .NET is."
 var ollamaUri = new Uri("http://localhost:11434");
 
 var model = "qwen3:4b-instruct";
 
 IChatClient chat = new OllamaApiClient(ollamaUri, model);
 
-var system = new ChatMessage(ChatRole.System,
-    "You are a friendly assistant. Answer in one short sentence.");
+var options = new ChatOptions { MaxOutputTokens = 20 };
 
-List<ChatMessage> messages = [system];
+ChatResponse response = await AskAsync([
+    new ChatMessage(ChatRole.User, "In about 150 words, explain what .NET is.")
+    ], options);
 
-string[] questions = [
-        "Hi! My name is Burak, and I teach .Net",
-        "What is my name?",
-        "What do I teach"
-    ];
+Console.WriteLine($"Output: {response.Usage?.OutputTokenCount}");
+Console.WriteLine($"Finish Reason: {response.FinishReason}");
 
-for(var turn = 1; turn <= questions.Length; turn++)
-{
-    var question = questions[turn - 1];
-    Console.WriteLine($"You: {question}");
+await RunFiveTimesAsync("Test 2 - default settings", null);
 
-    messages.Add(new ChatMessage(ChatRole.User, question));
+await RunFiveTimesAsync("Test 3 - Temp 0", new ChatOptions { Temperature=0, Seed = 42});
 
-    Console.Write("Model: ");
-    ChatResponse response = await AskAsync(messages);
-
-    messages.AddMessages(response);
-
-    Console.WriteLine($"    turn {turn}");
-    Console.WriteLine();
-}
-
-async Task<ChatResponse> AskAsync(IEnumerable<ChatMessage> conversation)
+async Task<ChatResponse> AskAsync(IEnumerable<ChatMessage> conversation, ChatOptions? options = null)
 {
     List<ChatResponseUpdate> updates = [];
 
-    await foreach(ChatResponseUpdate update in chat.GetStreamingResponseAsync(conversation))
+    await foreach(ChatResponseUpdate update in chat.GetStreamingResponseAsync(conversation, options))
     {
         Console.Write(update.Text);
         updates.Add(update);
@@ -48,4 +35,20 @@ async Task<ChatResponse> AskAsync(IEnumerable<ChatMessage> conversation)
     return updates.ToChatResponse();
 }
 
+async Task RunFiveTimesAsync(string title, ChatOptions? options)
+{
+    Console.WriteLine(title);
+    var answers = new HashSet<string>();
 
+    for(var run = 1; run <= 5; run++)
+    {
+        Console.Write($"    run {run}:");
+        ChatResponse response = await AskAsync(
+            [new ChatMessage(
+                ChatRole.User, "Suggest one name for a cooking app built with .NET. Reply with the name only.")], options);
+        answers.Add(response.Text.Trim());
+    }
+
+    Console.WriteLine($"{answers.Count} different answers from 5 runs.");
+    Console.WriteLine();
+}
