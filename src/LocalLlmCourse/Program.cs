@@ -1,52 +1,57 @@
-﻿using OllamaSharp;
-using Microsoft.Extensions.AI;
-using System.Diagnostics;
+﻿using System.Diagnostics;                         
+using Microsoft.Extensions.AI;                   
+using Microsoft.Extensions.DependencyInjection;  
+using Microsoft.Extensions.Hosting;              
+using OllamaSharp;                               
+using Microsoft.Extensions.Logging;
 
-// "In about 150 words, explain what .NET is."
-var ollamaUri = new Uri("http://localhost:11434");
-
-var model = "qwen3:4b";
-
-IChatClient chat = new OllamaApiClient(ollamaUri, model);
-
-var prompt = "ping. reply with one word only";
-
-var options = new ChatOptions
+// The host. It also reads appsettings.json from the app's own folder.
+var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
 {
-    Reasoning = new ReasoningOptions { Effort = ReasoningEffort.None}
+    Args = args,
+    ContentRootPath = AppContext.BaseDirectory
+});
+
+// Show the log messages of Microsoft.Extensions.AI (they are written at Debug level).
+builder.Logging.AddFilter("Microsoft.Extensions.AI", LogLevel.Debug);
+
+// A cache that lives in memory, for as long as the app runs.
+builder.Services.AddDistributedMemoryCache();
+
+var chat = builder.Configuration.GetSection("Chat");
+string provider = chat["Provider"] ?? "Ollama";
+string model = chat["Model"]
+    ?? throw new InvalidOperationException("Chat: Model is missing in appsettings file");
+var endpoint = new Uri(chat["Endpoint"] ?? "http://localhost:11434");
+
+IChatClient innerClient = provider switch
+{
+    "Ollama" => new OllamaApiClient(endpoint, model),
+    _ => throw new InvalidOperationException($"Unknown provider: {provider}")
 };
 
-// warm-up call
-await chat.GetResponseAsync(prompt, options);
+// Register IChatClient, and wrap it in a logging layer.
+builder.Services
+    .AddChatClient(innerClient)
+    .UseLogging()
+    .UseDistributedCache();
 
-// the measured call
-var sw = Stopwatch.StartNew();
-ChatResponse response = await chat.GetResponseAsync(prompt, options);
-sw.Stop();
+using IHost host = builder.Build();
 
-string thinking = string.Concat(
-    response.Messages
-    .SelectMany(message=>message.Contents)
-    .OfType<TextReasoningContent>()
-    .Select(reasoning=>reasoning.Text));
+// The rest of the app asks for IChatClient. It doesn't know what's behind it.
+IChatClient client = host.Services.GetRequiredService<IChatClient>();
 
-Console.WriteLine($"Model: { response.ModelId}");
-Console.WriteLine($"Answer: {response.Text}");
-Console.WriteLine($"OutputTokens : {response.Usage?.OutputTokenCount}");
-Console.WriteLine($"Elapsed: {sw.Elapsed.TotalSeconds:F2} s");
-Console.WriteLine($"Thinking Chars: {thinking.Length}");
+#region Rest of the application
+Console.WriteLine($"Provider: {provider} Model: {model}");
+var prompt = "In one sentence, what is .NET?";
 
-Console.WriteLine();
-Console.WriteLine("Hidden thinking...");
-Console.WriteLine(thinking);
+// The same question, twice.
+for (var call = 1; call <= 2; call++)
+{
+    var stopwatch = Stopwatch.StartNew();
+    ChatResponse response = await client.GetResponseAsync(prompt);
+    stopwatch.Stop();
 
-const string endOfThinking = "</think>";
-bool leaked = response.Text.Contains(endOfThinking);
-
-string realAnswer = leaked
-    ? response.Text[(response.Text.LastIndexOf(endOfThinking) + endOfThinking.Length)..]
-    : response.Text;
-
-Console.WriteLine();
-Console.WriteLine($"Leaked : {(leaked?"yes":"no")}");
-Console.WriteLine($"Real Answer : {realAnswer}");
+    Console.WriteLine($"call {call}   {stopwatch.Elapsed.TotalMilliseconds,7:F0} ms {response.ModelId}  {response.Text}");
+}
+#endregion
