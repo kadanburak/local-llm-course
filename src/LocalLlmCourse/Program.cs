@@ -1,54 +1,52 @@
 ﻿using OllamaSharp;
 using Microsoft.Extensions.AI;
+using System.Diagnostics;
 
 // "In about 150 words, explain what .NET is."
 var ollamaUri = new Uri("http://localhost:11434");
 
-var model = "qwen3:4b-instruct";
+var model = "qwen3:4b";
 
 IChatClient chat = new OllamaApiClient(ollamaUri, model);
 
-var options = new ChatOptions { MaxOutputTokens = 20 };
+var prompt = "ping. reply with one word only";
 
-ChatResponse response = await AskAsync([
-    new ChatMessage(ChatRole.User, "In about 150 words, explain what .NET is.")
-    ], options);
-
-Console.WriteLine($"Output: {response.Usage?.OutputTokenCount}");
-Console.WriteLine($"Finish Reason: {response.FinishReason}");
-
-await RunFiveTimesAsync("Test 2 - default settings", null);
-
-await RunFiveTimesAsync("Test 3 - Temp 0", new ChatOptions { Temperature=0, Seed = 42});
-
-async Task<ChatResponse> AskAsync(IEnumerable<ChatMessage> conversation, ChatOptions? options = null)
+var options = new ChatOptions
 {
-    List<ChatResponseUpdate> updates = [];
+    Reasoning = new ReasoningOptions { Effort = ReasoningEffort.None}
+};
 
-    await foreach(ChatResponseUpdate update in chat.GetStreamingResponseAsync(conversation, options))
-    {
-        Console.Write(update.Text);
-        updates.Add(update);
-    }
+// warm-up call
+await chat.GetResponseAsync(prompt, options);
 
-    Console.WriteLine(); // empty line
-    return updates.ToChatResponse();
-}
+// the measured call
+var sw = Stopwatch.StartNew();
+ChatResponse response = await chat.GetResponseAsync(prompt, options);
+sw.Stop();
 
-async Task RunFiveTimesAsync(string title, ChatOptions? options)
-{
-    Console.WriteLine(title);
-    var answers = new HashSet<string>();
+string thinking = string.Concat(
+    response.Messages
+    .SelectMany(message=>message.Contents)
+    .OfType<TextReasoningContent>()
+    .Select(reasoning=>reasoning.Text));
 
-    for(var run = 1; run <= 5; run++)
-    {
-        Console.Write($"    run {run}:");
-        ChatResponse response = await AskAsync(
-            [new ChatMessage(
-                ChatRole.User, "Suggest one name for a cooking app built with .NET. Reply with the name only.")], options);
-        answers.Add(response.Text.Trim());
-    }
+Console.WriteLine($"Model: { response.ModelId}");
+Console.WriteLine($"Answer: {response.Text}");
+Console.WriteLine($"OutputTokens : {response.Usage?.OutputTokenCount}");
+Console.WriteLine($"Elapsed: {sw.Elapsed.TotalSeconds:F2} s");
+Console.WriteLine($"Thinking Chars: {thinking.Length}");
 
-    Console.WriteLine($"{answers.Count} different answers from 5 runs.");
-    Console.WriteLine();
-}
+Console.WriteLine();
+Console.WriteLine("Hidden thinking...");
+Console.WriteLine(thinking);
+
+const string endOfThinking = "</think>";
+bool leaked = response.Text.Contains(endOfThinking);
+
+string realAnswer = leaked
+    ? response.Text[(response.Text.LastIndexOf(endOfThinking) + endOfThinking.Length)..]
+    : response.Text;
+
+Console.WriteLine();
+Console.WriteLine($"Leaked : {(leaked?"yes":"no")}");
+Console.WriteLine($"Real Answer : {realAnswer}");
